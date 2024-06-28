@@ -1,0 +1,32 @@
+.main-box {
+    margin: 1rem;
+}
+
+.main-box > *:not(:last-child) {
+    margin-bottom: 1rem;
+}
+
+.image-list-box > *:not(:last-child) {
+    margin-right: 0.5rem;
+}
+
+.image-list-frame {
+    border-radius: 1rem;
+}
+
+.image-preview-frame {
+    border-style: none;
+    border-radius: 0.25rem;
+}
+
+.top-box-frame {
+    padding: 1rem;
+}
+
+.image-frame {
+    padding: 1rem;
+}
+
+.top-box > *:not(:last-child) {
+    margin-bottom: 0.5rem;
+}
