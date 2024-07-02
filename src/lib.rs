@@ -15,15 +15,16 @@ lazy_static! {
 }
 
 pub async fn generate_image(
-    prompt: impl Into<String>
+    prompt: impl Into<String>,
+    resolution: [u32; 2]
 ) -> Result<Bytes> {
     let url = format!(
         "https://image.pollinations.ai/prompt/{}",
         prompt.into()
     );
     let params = [
-        ("width", 1024.to_string()),
-        ("height", 1024.to_string()),
+        ("width", resolution[0].to_string()),
+        ("height", resolution[1].to_string()),
         ("nologo", false.to_string())
     ];
 

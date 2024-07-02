@@ -1,14 +1,21 @@
 use std::cell::{Cell, RefCell};
+use std::convert::AsRef;
 use std::path::Path;
 use std::rc::Rc;
-use gtk4::{AlertDialog, Align, Application, ApplicationWindow, BoxLayout, Button, CheckButton, Entry, Frame, glib, Grid, GridLayout, Image, Orientation, PolicyType, ScrolledWindow};
+use gtk4::{AlertDialog, Align, Application, ApplicationWindow, BoxLayout, Button, CheckButton, Entry, Frame, glib, Grid, GridLayout, Image, ListItem, ListView, NoSelection, Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection, StringList, StringObject, Widget};
 use gtk4::glib::clone;
-use gtk4::prelude::{BoxExt, ButtonExt, Cast, CellLayoutExt, CheckButtonExt, EditableExt, GridExt, GtkWindowExt, LayoutManagerExt, WidgetExt};
+use gtk4::prelude::{BoxExt, ButtonExt, Cast, CellLayoutExt, CheckButtonExt, EditableExt, GridExt, GtkWindowExt, LayoutManagerExt, WidgetExt, ListItemExt, GObjectPropertyExpressionExt, CastNone};
 use gtk4::Box;
 use poligen_rs::{generate_image, save_image};
 use crate::runtime;
 
-const ASPECT_PRESETS: [(&str, [i32; 2]); 3] = [
+const OUTPUT_PATH: &str = "outputs/";
+
+fn output_path() -> &'static Path {
+    Path::new(OUTPUT_PATH)
+}
+
+const ASPECT_PRESETS: [(&str, [u32; 2]); 3] = [
     ("1:1", [1024, 1024]),
     ("3:4", [768, 1024]),
     ("16:9", [1024, 576]),
@@ -116,47 +123,89 @@ pub fn build_ui(app: &Application) {
         .css_classes(["top-box-frame"])
         .build();
 
-    let image = Image::builder()
+    let generated_image = Image::builder()
         .file("test.jpg")
         .hexpand(true)
         .vexpand(true)
         .build();
 
-    let image_frame = Frame::builder()
-        .child(&image)
+    let generated_image_frame = Frame::builder()
+        .child(&generated_image)
         .hexpand(true)
         .vexpand(true)
         .css_classes(["image-frame"])
         .build();
 
-    let image_list_box = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .height_request(100)
-        .homogeneous(true)
-        .css_classes(["image-list-box"])
-        .build();
-
-    for _ in 0..20 {
+    let image_list_factory = SignalListItemFactory::new();
+    image_list_factory.connect_setup(clone!(@weak generated_image => move |_, list_item| {
         let image = Image::builder()
-            .file("test.jpg")
             .height_request(100)
             .width_request(100)
             .css_classes(["image-preview"])
             .build();
+        
+        let button = Button::builder()
+            .css_classes(["image-preview-button"])
+            .child(&image)
+            .build();
 
         let frame = Frame::builder()
-            .child(&image)
+            .child(&button)
             .css_classes(["image-preview-frame"])
             .build();
 
-        image_list_box.append(&frame);
-    }
+        let list_item = list_item
+            .downcast_ref::<ListItem>()
+            .unwrap();
+
+        list_item.set_child(Some(&frame));
+        
+        button.connect_clicked(clone!(@weak list_item, @weak generated_image => move |_| {
+            let item = list_item.item().and_downcast::<StringObject>().unwrap();
+            dbg!(&item.string());
+            generated_image.set_file(Some(item.string().as_str()));
+        }));
+
+        list_item
+            .property_expression("item")
+            .chain_property::<StringObject>("string")
+            .bind(&image, "file", Widget::NONE);
+    }));
+    
+    let image_list_selection_model = NoSelection::new(Option::<StringList>::None);
+    let image_list = ListView::builder()
+        .orientation(Orientation::Horizontal)
+        .height_request(100)
+        .css_classes(["image-list-box"])
+        .model(&image_list_selection_model)
+        .factory(&image_list_factory)
+        .build();
+
+    let update_image_list = clone!(@weak image_list_selection_model => move || {
+        if let Ok(dir) = output_path().read_dir() {
+            let mut dir = dir
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>();
+            
+            dir.sort_unstable_by_key(|entry| entry.metadata().unwrap().modified().unwrap());
+            dir.reverse();
+            
+            let image_list_model: StringList = dir.into_iter()
+                .map(|entry| entry.path().to_str().unwrap().to_owned())
+                .collect();
+
+            image_list_selection_model.set_model(Some(&image_list_model));
+        } else {
+            image_list_selection_model.set_model(Option::<&StringList>::None);
+        }
+    });
+    update_image_list();
 
     let image_list = ScrolledWindow::builder()
         .vscrollbar_policy(PolicyType::Never)
         .hscrollbar_policy(PolicyType::Automatic)
         .kinetic_scrolling(true)
-        .child(&image_list_box)
+        .child(&image_list)
         .css_classes(["image-list"])
         .build();
 
@@ -171,7 +220,7 @@ pub fn build_ui(app: &Application) {
         .build();
 
     main_box.append(&top_box_frame);
-    main_box.append(&image_frame);
+    main_box.append(&generated_image_frame);
     main_box.append(&image_list_frame);
 
     let window = ApplicationWindow::builder()
@@ -184,20 +233,22 @@ pub fn build_ui(app: &Application) {
 
     let (sender, receiver) = async_channel::unbounded();
 
-    generate_button.connect_clicked(clone!(@weak input => move |_| {
+    generate_button.connect_clicked(clone!(@weak input, @weak aspect_ratio_choice => move |_| {
         let prompt = input.text();
         eprintln!("{prompt}");
+        let resolution = aspect_ratio_choice.get();
 
         runtime().spawn(clone!(@strong sender => async move {
             let generate_result = generate_image(
-                prompt
+                prompt,
+                resolution
             ).await;
 
             sender.send(generate_result).await.expect("channel has to be open");
         }));
     }));
 
-    glib::spawn_future_local(clone!(@weak image, @weak window => async move {
+    glib::spawn_future_local(clone!(@weak generated_image, @weak window => async move {
         while let Ok(response) = receiver.recv().await {
             let bytes = match response {
                 Ok(bytes) => bytes,
@@ -215,7 +266,7 @@ pub fn build_ui(app: &Application) {
                 }
             };
 
-            let file_path = match save_image(bytes, Path::new("outputs/"), "jpg").await {
+            let file_path = match save_image(bytes, output_path(), "jpg").await {
                 Ok(path) => path,
                 Err(err) => {
                     let alert = AlertDialog::builder()
@@ -231,7 +282,8 @@ pub fn build_ui(app: &Application) {
                 }
             };
 
-            image.set_file(Some(file_path.canonicalize().unwrap().to_str().unwrap()));
+            generated_image.set_file(Some(file_path.canonicalize().unwrap().to_str().unwrap()));
+            update_image_list();
         }
     }));
 
