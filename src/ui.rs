@@ -1,55 +1,104 @@
 use std::cell::{Cell, RefCell};
 use std::path::Path;
 use std::rc::Rc;
-use gtk4::{AlertDialog, Align, Application, ApplicationWindow, Button, CheckButton, Entry, Frame, glib, GridLayout, Image, Orientation, PolicyType, ScrolledWindow};
+use gtk4::{AlertDialog, Align, Application, ApplicationWindow, BoxLayout, Button, CheckButton, Entry, Frame, glib, Grid, GridLayout, Image, Orientation, PolicyType, ScrolledWindow};
 use gtk4::glib::clone;
-use gtk4::prelude::{BoxExt, ButtonExt, Cast, CheckButtonExt, EditableExt, GridExt, GtkWindowExt, WidgetExt};
+use gtk4::prelude::{BoxExt, ButtonExt, Cast, CellLayoutExt, CheckButtonExt, EditableExt, GridExt, GtkWindowExt, LayoutManagerExt, WidgetExt};
 use gtk4::Box;
 use poligen_rs::{generate_image, save_image};
 use crate::runtime;
+
+const ASPECT_PRESETS: [(&str, [i32; 2]); 3] = [
+    ("1:1", [1024, 1024]),
+    ("3:4", [768, 1024]),
+    ("16:9", [1024, 576]),
+];
 
 pub fn build_ui(app: &Application) {
     let input = Entry::builder()
         .placeholder_text("Prompt")
         .build();
 
-    let aspect_ratio_box = Box::builder()
-        .orientation(Orientation::Horizontal)
-        .css_classes(["ratio-box"])
+    let aspect_ratio_grid = Grid::builder()
+        .column_homogeneous(false)
         .build();
-
-    let aspect_ratio_choice = Rc::new(Cell::new(""));
-
+    
+    let aspect_ratio_choice = Rc::new(Cell::new([0, 0]));
+    let mut aspect_ratio_checks = Vec::with_capacity(ASPECT_PRESETS.len());
+    
     {
         let mut first_checkbox = None;
 
-        for aspect_ratio in ["1:1", "3:4", "16:9"] {
-            let ratio_input = CheckButton::builder()
+        for (i, (aspect_ratio, resolution)) in ASPECT_PRESETS.into_iter().enumerate() {
+            let aspect_ratio_check = CheckButton::builder()
                 .halign(Align::Center)
                 .hexpand(true)
                 .label(aspect_ratio)
                 .build();
 
-            ratio_input.connect_toggled(clone!(@strong aspect_ratio_choice => move |ratio_input| {
+            aspect_ratio_check.connect_toggled(clone!(@strong aspect_ratio_choice => move |ratio_input| {
                 if ratio_input.is_active() {
-                    aspect_ratio_choice.set(aspect_ratio);
+                    aspect_ratio_choice.set(resolution);
                     dbg!(&aspect_ratio_choice);
                 }
             }));
 
             match &first_checkbox {
                 None => {
-                    ratio_input.set_active(true);
-                    first_checkbox = Some(ratio_input.clone());
+                    aspect_ratio_check.set_active(true);
+                    first_checkbox = Some(aspect_ratio_check.clone());
                 }
                 Some(first_checkbox) => {
-                    ratio_input.set_group(Some(first_checkbox));
+                    aspect_ratio_check.set_group(Some(first_checkbox));
                 }
             }
 
-            aspect_ratio_box.append(&ratio_input);
+            aspect_ratio_grid.attach(&aspect_ratio_check, i as i32, 0, 1, 1);
+            aspect_ratio_checks.push(aspect_ratio_check);
         }
     }
+    
+    let custom_aspect_ratio_input_x = Entry::builder()
+        .placeholder_text("Width")
+        .text("1024")
+        .hexpand(true)
+        .build();
+    
+    let custom_aspect_ratio_input_y = Entry::builder()
+        .placeholder_text("Height")
+        .text("1024")
+        .hexpand(true)
+        .build();
+    
+    let custom_aspect_ratio_box = Box::builder()
+        .hexpand(true)
+        .sensitive(false)
+        .opacity(0.0)
+        .css_classes(["custom-aspect-ratio-box"])
+        .build();
+    
+    custom_aspect_ratio_box.append(&custom_aspect_ratio_input_x);
+    custom_aspect_ratio_box.append(&custom_aspect_ratio_input_y);
+    
+    aspect_ratio_grid.attach(&custom_aspect_ratio_box, 0, 0, ASPECT_PRESETS.len() as i32, 1);
+
+    let custom_aspect_ratio_check = CheckButton::builder()
+        .halign(Align::Center)
+        .hexpand(true)
+        .label("Custom")
+        .build();
+    
+    custom_aspect_ratio_check.connect_toggled(clone!(@weak custom_aspect_ratio_box => move |check| {
+        let active = check.is_active();
+        
+        custom_aspect_ratio_box.set_opacity(if active { 1.0 } else { 0.0 });
+        custom_aspect_ratio_box.set_sensitive(active);
+        for check in &aspect_ratio_checks {
+            check.set_visible(!active);
+        }
+    }));
+
+    aspect_ratio_grid.attach(&custom_aspect_ratio_check, ASPECT_PRESETS.len() as i32, 0, 1, 1);
 
     let generate_button = Button::with_label("Generate");
 
@@ -59,7 +108,7 @@ pub fn build_ui(app: &Application) {
         .build();
 
     top_box.append(&input);
-    top_box.append(&aspect_ratio_box);
+    top_box.append(&aspect_ratio_grid);
     top_box.append(&generate_button);
 
     let top_box_frame = Frame::builder()

@@ -26,3 +26,7 @@
 .top-box > *:not(:last-child) {
     margin-bottom: 0.5rem;
 }
+
+.custom-aspect-ratio-box > *:not(:last-child) {
+    margin-right: 0.5rem;
+}
