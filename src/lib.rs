@@ -25,7 +25,7 @@ pub async fn generate_image(
     let params = [
         ("width", resolution[0].to_string()),
         ("height", resolution[1].to_string()),
-        ("nologo", false.to_string())
+        ("nologo", true.to_string())
     ];
 
     let url = Url::parse_with_params(&url, params)?;
