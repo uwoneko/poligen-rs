@@ -6,7 +6,7 @@ use gtk4::{AlertDialog, Align, Application, ApplicationWindow, BoxLayout, Button
 use gtk4::glib::clone;
 use gtk4::prelude::{BoxExt, ButtonExt, Cast, CellLayoutExt, CheckButtonExt, EditableExt, GridExt, GtkWindowExt, LayoutManagerExt, WidgetExt, ListItemExt, GObjectPropertyExpressionExt, CastNone};
 use gtk4::Box;
-use poligen_rs::{generate_image, save_image};
+use poligen_rs::{generate_image, NoLogo, save_image};
 use crate::runtime;
 
 const OUTPUT_PATH: &str = "outputs/";
@@ -106,6 +106,25 @@ pub fn build_ui(app: &Application) {
     }));
 
     aspect_ratio_grid.attach(&custom_aspect_ratio_check, ASPECT_PRESETS.len() as i32, 0, 1, 1);
+    
+    let private_check = CheckButton::builder()
+        .label("Private")
+        .hexpand(true)
+        .halign(Align::Center)
+        .build();
+
+    let enhance_check = CheckButton::builder()
+        .label("Enhance")
+        .hexpand(true)
+        .halign(Align::Center)
+        .build();
+    
+    let misc_checks_box = Box::builder()
+        .orientation(Orientation::Horizontal)
+        .build();
+    
+    misc_checks_box.append(&private_check);
+    misc_checks_box.append(&enhance_check);
 
     let generate_button = Button::with_label("Generate");
 
@@ -116,6 +135,7 @@ pub fn build_ui(app: &Application) {
 
     top_box.append(&input);
     top_box.append(&aspect_ratio_grid);
+    top_box.append(&misc_checks_box);
     top_box.append(&generate_button);
 
     let top_box_frame = Frame::builder()
@@ -233,15 +253,20 @@ pub fn build_ui(app: &Application) {
 
     let (sender, receiver) = async_channel::unbounded();
 
-    generate_button.connect_clicked(clone!(@weak input, @weak aspect_ratio_choice => move |_| {
+    generate_button.connect_clicked(clone!(@weak input, @weak aspect_ratio_choice, @weak private_check, @weak enhance_check => move |_| {
         let prompt = input.text();
         eprintln!("{prompt}");
         let resolution = aspect_ratio_choice.get();
+        let private = private_check.is_active();
+        let enhance = enhance_check.is_active();
 
         runtime().spawn(clone!(@strong sender => async move {
             let generate_result = generate_image(
                 prompt,
-                resolution
+                resolution,
+                private,
+                enhance,
+                NoLogo::Value(true)
             ).await;
 
             sender.send(generate_result).await.expect("channel has to be open");

@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::fs;
 use std::path::{Path, PathBuf};
 use gtk4::prelude::{FileExt, IOStreamExt, OutputStreamExtManual, ToSendValue};
@@ -14,18 +15,38 @@ lazy_static! {
     static ref REQWEST_CLIENT: reqwest::Client = reqwest::Client::new();
 }
 
+pub enum NoLogo {
+    Value(bool),
+    Password(String)
+}
+
+impl Display for NoLogo {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            NoLogo::Value(bool) => write!(f, "{}", bool),
+            NoLogo::Password(password) => write!(f, "{}", password)
+        }
+    }
+}
+
 pub async fn generate_image(
     prompt: impl Into<String>,
-    resolution: [u32; 2]
+    resolution: [u32; 2],
+    private: bool,
+    enhance: bool,
+    nologo: NoLogo,
 ) -> Result<Bytes> {
     let url = format!(
         "https://image.pollinations.ai/prompt/{}",
         prompt.into()
     );
+    
     let params = [
         ("width", resolution[0].to_string()),
         ("height", resolution[1].to_string()),
-        ("nologo", true.to_string())
+        ("private", private.to_string()),
+        ("enhance", enhance.to_string()),
+        ("nologo", nologo.to_string()),
     ];
 
     let url = Url::parse_with_params(&url, params)?;
