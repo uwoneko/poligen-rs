@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::convert::AsRef;
+use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::rc::Rc;
 use gtk4::{AlertDialog, Align, Application, ApplicationWindow, BoxLayout, Button, CheckButton, Entry, Frame, glib, Grid, GridLayout, Image, ListItem, ListView, NoSelection, Orientation, PolicyType, ScrolledWindow, SignalListItemFactory, SingleSelection, StringList, StringObject, Widget};
@@ -15,14 +16,47 @@ fn output_path() -> &'static Path {
     Path::new(OUTPUT_PATH)
 }
 
-const ASPECT_PRESETS: [(&str, [u32; 2]); 3] = [
-    ("1:1", [1024, 1024]),
-    ("3:4", [768, 1024]),
-    ("16:9", [1024, 576]),
-];
+#[derive(Default, Copy, Clone, Debug)]
+enum AspectRatio {
+    #[default]
+    OneByOne,
+    ThreeByFour,
+    SixteenByNine,
+    Custom([u32; 2])
+}
+
+impl AspectRatio {
+    fn to_resolution(&self) -> [u32; 2] {
+        match self {
+            AspectRatio::OneByOne => [1024, 1024],
+            AspectRatio::ThreeByFour => [768, 1024],
+            AspectRatio::SixteenByNine => [1024, 576],
+            AspectRatio::Custom(resolution) => *resolution
+        }
+    }
+
+    fn ratio_presets() -> [AspectRatio; 3] {
+        [
+            AspectRatio::OneByOne,
+            AspectRatio::ThreeByFour,
+            AspectRatio::SixteenByNine
+        ]
+    }
+}
+
+impl Display for AspectRatio {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            AspectRatio::OneByOne => "1:1",
+            AspectRatio::ThreeByFour => "3:4",
+            AspectRatio::SixteenByNine => "16:9",
+            AspectRatio::Custom(_) => unimplemented!()
+        })
+    }
+}
 
 pub fn build_ui(app: &Application) {
-    let input = Entry::builder()
+    let prompt_input = Entry::builder()
         .placeholder_text("Prompt")
         .build();
 
@@ -30,22 +64,22 @@ pub fn build_ui(app: &Application) {
         .column_homogeneous(false)
         .build();
     
-    let aspect_ratio_choice = Rc::new(Cell::new([0, 0]));
-    let mut aspect_ratio_checks = Vec::with_capacity(ASPECT_PRESETS.len());
+    let aspect_ratio_choice = Rc::new(Cell::new(AspectRatio::default()));
+    let mut aspect_ratio_checks = Vec::with_capacity(AspectRatio::ratio_presets().len());
     
     {
         let mut first_checkbox = None;
 
-        for (i, (aspect_ratio, resolution)) in ASPECT_PRESETS.into_iter().enumerate() {
+        for (i, aspect_ratio) in AspectRatio::ratio_presets().into_iter().enumerate() {
             let aspect_ratio_check = CheckButton::builder()
                 .halign(Align::Center)
                 .hexpand(true)
-                .label(aspect_ratio)
+                .label(aspect_ratio.to_string())
                 .build();
 
             aspect_ratio_check.connect_toggled(clone!(@strong aspect_ratio_choice => move |ratio_input| {
                 if ratio_input.is_active() {
-                    aspect_ratio_choice.set(resolution);
+                    aspect_ratio_choice.set(aspect_ratio);
                     dbg!(&aspect_ratio_choice);
                 }
             }));
@@ -87,7 +121,7 @@ pub fn build_ui(app: &Application) {
     custom_aspect_ratio_box.append(&custom_aspect_ratio_input_x);
     custom_aspect_ratio_box.append(&custom_aspect_ratio_input_y);
     
-    aspect_ratio_grid.attach(&custom_aspect_ratio_box, 0, 0, ASPECT_PRESETS.len() as i32, 1);
+    aspect_ratio_grid.attach(&custom_aspect_ratio_box, 0, 0, AspectRatio::ratio_presets().len() as i32, 1);
 
     let custom_aspect_ratio_check = CheckButton::builder()
         .halign(Align::Center)
@@ -95,7 +129,7 @@ pub fn build_ui(app: &Application) {
         .label("Custom")
         .build();
     
-    custom_aspect_ratio_check.connect_toggled(clone!(@weak custom_aspect_ratio_box => move |check| {
+    custom_aspect_ratio_check.connect_toggled(clone!(@weak custom_aspect_ratio_box, @strong aspect_ratio_choice, @weak custom_aspect_ratio_input_x, @weak custom_aspect_ratio_input_y => move |check| {
         let active = check.is_active();
         
         custom_aspect_ratio_box.set_opacity(if active { 1.0 } else { 0.0 });
@@ -103,10 +137,15 @@ pub fn build_ui(app: &Application) {
         for check in &aspect_ratio_checks {
             check.set_visible(!active);
         }
+
+        if active {
+            aspect_ratio_choice.set(AspectRatio::Custom([custom_aspect_ratio_input_x.text().parse().unwrap_or(0), custom_aspect_ratio_input_y.text().parse().unwrap_or(0)]));
+            dbg!(&aspect_ratio_choice);
+        }
     }));
 
-    aspect_ratio_grid.attach(&custom_aspect_ratio_check, ASPECT_PRESETS.len() as i32, 0, 1, 1);
-    
+    aspect_ratio_grid.attach(&custom_aspect_ratio_check, AspectRatio::ratio_presets().len() as i32, 0, 1, 1);
+
     let private_check = CheckButton::builder()
         .label("Private")
         .hexpand(true)
@@ -118,11 +157,11 @@ pub fn build_ui(app: &Application) {
         .hexpand(true)
         .halign(Align::Center)
         .build();
-    
+
     let misc_checks_box = Box::builder()
         .orientation(Orientation::Horizontal)
         .build();
-    
+
     misc_checks_box.append(&private_check);
     misc_checks_box.append(&enhance_check);
 
@@ -133,7 +172,7 @@ pub fn build_ui(app: &Application) {
         .css_classes(["top-box"])
         .build();
 
-    top_box.append(&input);
+    top_box.append(&prompt_input);
     top_box.append(&aspect_ratio_grid);
     top_box.append(&misc_checks_box);
     top_box.append(&generate_button);
@@ -253,10 +292,10 @@ pub fn build_ui(app: &Application) {
 
     let (sender, receiver) = async_channel::unbounded();
 
-    generate_button.connect_clicked(clone!(@weak input, @weak aspect_ratio_choice, @weak private_check, @weak enhance_check => move |_| {
-        let prompt = input.text();
+    generate_button.connect_clicked(clone!(@weak prompt_input, @weak aspect_ratio_choice, @weak private_check, @weak enhance_check => move |_| {
+        let prompt = prompt_input.text();
         eprintln!("{prompt}");
-        let resolution = aspect_ratio_choice.get();
+        let resolution = aspect_ratio_choice.get().to_resolution();
         let private = private_check.is_active();
         let enhance = enhance_check.is_active();
 
@@ -309,6 +348,34 @@ pub fn build_ui(app: &Application) {
 
             generated_image.set_file(Some(file_path.canonicalize().unwrap().to_str().unwrap()));
             update_image_list();
+        }
+    }));
+
+    let update_button_state = Rc::new(clone!(@weak generate_button, @weak aspect_ratio_choice => move || {
+        let mut sensitive = true;
+        if let AspectRatio::Custom(resolution) = aspect_ratio_choice.get() {
+            if resolution.iter().any(|x| *x == 0) {
+                sensitive = false;
+            }
+        }
+        generate_button.set_sensitive(sensitive);
+    }));
+
+    custom_aspect_ratio_input_x.connect_changed(clone!(@strong aspect_ratio_choice, @strong update_button_state => move |input| {
+        if let AspectRatio::Custom(mut resolution) = aspect_ratio_choice.get() {
+            resolution[0] = input.text().parse().unwrap_or(0);
+            aspect_ratio_choice.set(AspectRatio::Custom(resolution));
+            dbg!(&aspect_ratio_choice);
+            update_button_state();
+        }
+    }));
+
+    custom_aspect_ratio_input_y.connect_changed(clone!(@strong aspect_ratio_choice, @strong update_button_state => move |input| {
+        if let AspectRatio::Custom(mut resolution) = aspect_ratio_choice.get() {
+            resolution[1] = input.text().parse().unwrap_or(0);
+            aspect_ratio_choice.set(AspectRatio::Custom(resolution));
+            dbg!(&aspect_ratio_choice);
+            update_button_state();
         }
     }));
 
