@@ -7,6 +7,7 @@ use gtk4::{AlertDialog, Align, Application, ApplicationWindow, BoxLayout, Button
 use gtk4::glib::clone;
 use gtk4::prelude::{BoxExt, ButtonExt, Cast, CellLayoutExt, CheckButtonExt, EditableExt, GridExt, GtkWindowExt, LayoutManagerExt, WidgetExt, ListItemExt, GObjectPropertyExpressionExt, CastNone};
 use gtk4::Box;
+use tap::Tap;
 use poligen_rs::{generate_image, NoLogo, save_image};
 use crate::runtime;
 
@@ -183,10 +184,23 @@ pub fn build_ui(app: &Application) {
         .build();
 
     let generated_image = Image::builder()
-        .file("test.jpg")
         .hexpand(true)
         .vexpand(true)
         .build();
+    
+    if let Some(path) = output_path().read_dir()
+        .ok()
+        .and_then(|read_dir|
+            read_dir
+                .filter_map(Result::ok)
+                .collect::<Vec<_>>()
+                .tap_mut(|dir| dir.sort_unstable_by_key(|entry| entry.metadata().unwrap().modified().unwrap()))
+                .into_iter()
+                .next_back()
+                .map(|entry| entry.path())
+        ) {
+        generated_image.set_file(Some(path.to_str().unwrap()));
+    }
 
     let generated_image_frame = Frame::builder()
         .child(&generated_image)
@@ -242,14 +256,12 @@ pub fn build_ui(app: &Application) {
 
     let update_image_list = clone!(@weak image_list_selection_model => move || {
         if let Ok(dir) = output_path().read_dir() {
-            let mut dir = dir
+            let image_list_model: StringList = dir
                 .filter_map(Result::ok)
-                .collect::<Vec<_>>();
-            
-            dir.sort_unstable_by_key(|entry| entry.metadata().unwrap().modified().unwrap());
-            dir.reverse();
-            
-            let image_list_model: StringList = dir.into_iter()
+                .collect::<Vec<_>>()
+                .tap_mut(|dir| dir.sort_unstable_by_key(|entry| entry.metadata().unwrap().modified().unwrap()))
+                .into_iter()
+                .rev()
                 .map(|entry| entry.path().to_str().unwrap().to_owned())
                 .collect();
 
